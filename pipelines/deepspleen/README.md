@@ -24,4 +24,4 @@ bash scripts/run.sh /path/to/input.nii.gz
 ```
 
 Output is saved to:
-- `pipelines/deepspleen/outputs/<case_id>_mask.nii.gz`
+- `outputs/deepspleenseg/masks/<case_id>_mask.nii.gz`

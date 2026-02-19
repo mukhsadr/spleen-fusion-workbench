@@ -11,7 +11,7 @@ Usage:
 Commands:
   all      Setup + run inference
   setup    Extract minimal assets from SIF and patch for local execution
-  run      Run minimal inference using extracted assets
+  run      Run inference using extracted assets (default: legacy/original flow)
 
 Options:
   --sif <path>           Path to SIF image (default: ./spiders_DeepSpleen.sif)
@@ -22,6 +22,7 @@ Options:
   --view <name>          View name (default: view3)
   --batch-size <n>       Batch size for inference (default: 4)
   --lmk-num <n>          Number of output classes (default: 2)
+  --infer-mode <mode>    Inference mode: legacy|minimal (default: legacy)
   --output-nii <path>    Output mask path (default: <root>/local_run/<case-id>_mask.nii.gz)
   --no-restore-shape     Keep output at 256x256xZ instead of restoring input XY shape
   --copy-runtime         Copy miniconda locally (slower, optional)
@@ -58,6 +59,7 @@ LMK_NUM="2"
 COPY_RUNTIME="0"
 OUTPUT_NII=""
 RESTORE_SHAPE="1"
+INFER_MODE="legacy"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
@@ -78,6 +80,7 @@ while [[ $# -gt 0 ]]; do
     --view) VIEW="$2"; shift 2 ;;
     --batch-size) BATCH_SIZE="$2"; shift 2 ;;
     --lmk-num) LMK_NUM="$2"; shift 2 ;;
+    --infer-mode) INFER_MODE="$2"; shift 2 ;;
     --output-nii) OUTPUT_NII="$2"; shift 2 ;;
     --no-restore-shape) RESTORE_SHAPE="0"; shift ;;
     --copy-runtime) COPY_RUNTIME="1"; shift ;;
@@ -288,11 +291,50 @@ patch_local_python() {
   [[ -f "$seg" ]] || die "Missing file: $seg"
   [[ -f "$gcn" ]] || die "Missing file: $gcn"
 
-  if ! grep -q "MODEL_ROOT_PATH" "$seg"; then
-    sed -i "s|model_root_path = '/extra/deepNetworks/EssNet/500/cross_entropy/models'|model_root_path = os.environ.get('MODEL_ROOT_PATH', '/extra/deepNetworks/EssNet/500/cross_entropy/models')|g" "$seg"
-  fi
+  python3 - "$seg" "$gcn" <<'PYEOF'
+import re
+import sys
+from pathlib import Path
 
-  sed -i "s|resnet = models.resnet50(pretrained=True)|resnet = models.resnet50(pretrained=False)|g" "$gcn"
+seg_path = Path(sys.argv[1])
+gcn_path = Path(sys.argv[2])
+seg = seg_path.read_text()
+gcn = gcn_path.read_text()
+
+if "import os, sys" in seg:
+    seg = seg.replace("import os, sys", "import os, sys", 1)
+elif "import os" not in seg:
+    seg = "import os\n" + seg
+
+seg = seg.replace(
+    "model_root_path = '/extra/deepNetworks/EssNet/500/cross_entropy/models'",
+    "model_root_path = os.environ.get('MODEL_ROOT_PATH', '/extra/deepNetworks/EssNet/500/cross_entropy/models')",
+)
+seg = seg.replace(
+    "test_img_root_dir = '/OUTPUTS/Data_2D/'",
+    "test_img_root_dir = os.environ.get('TEST_IMG_ROOT_DIR', '/OUTPUTS/Data_2D/')",
+)
+seg = seg.replace(
+    "working_root_dir = '/OUTPUTS/DeepSegResults/'",
+    "working_root_dir = os.environ.get('WORKING_ROOT_DIR', '/OUTPUTS/DeepSegResults/')",
+)
+seg = seg.replace(
+    "img_load_name = '/OUTPUTS/dicom2nifti/'",
+    "img_load_name = os.environ.get('IMG_LOAD_NAME', '/OUTPUTS/dicom2nifti/')",
+)
+seg = seg.replace(
+    "img_name = '/OUTPUTS/dicom2nifti/target_img.nii.gz'",
+    "img_name = os.environ.get('IMG_NAME', '/OUTPUTS/dicom2nifti/target_img.nii.gz')",
+)
+seg = re.sub(r"num_workers\s*=\s*\d+", "num_workers = opt.workers", seg)
+gcn = gcn.replace(
+    "resnet = models.resnet50(pretrained=True)",
+    "resnet = models.resnet50(pretrained=False)",
+)
+
+seg_path.write_text(seg)
+gcn_path.write_text(gcn)
+PYEOF
   write_prepare_script
   write_minimal_infer_script
 }
@@ -341,6 +383,8 @@ run_inference() {
   [[ -n "$INPUT_NII" ]] || die "--input-nii is required for run/all"
   [[ -f "$INPUT_NII" ]] || die "Input NIfTI not found: $INPUT_NII"
   [[ -f "$EXTRACTED_DIR/python/segment_test.py" ]] || die "Missing extracted files. Run setup first."
+  [[ "$INFER_MODE" == "legacy" || "$INFER_MODE" == "minimal" ]] || die "--infer-mode must be: legacy|minimal"
+  patch_local_python
 
   local pybin
   pybin="$(pick_python)"
@@ -348,19 +392,101 @@ run_inference() {
   mkdir -p "$RUN_DIR" "$RESULTS_DIR"
   local out_file
   out_file="${OUTPUT_NII:-$RUN_DIR/${CASE_ID}_mask.nii.gz}"
-  local restore_flag=""
-  if [[ "$RESTORE_SHAPE" == "1" ]]; then
-    restore_flag="--restore-shape"
-  fi
+  mkdir -p "$(dirname "$out_file")"
 
-  log "Running minimal model inference"
-  "$pybin" "$EXTRACTED_DIR/python/minimal_infer.py" \
-    --input-nii "$INPUT_NII" \
-    --output-nii "$out_file" \
-    --model-pth "$EXTRACTED_DIR/models/view3/model_spleen.pth" \
-    --batch-size "$BATCH_SIZE" \
-    --lmk-num "$LMK_NUM" \
-    $restore_flag
+  if [[ "$INFER_MODE" == "minimal" ]]; then
+    local restore_flag=""
+    if [[ "$RESTORE_SHAPE" == "1" ]]; then
+      restore_flag="--restore-shape"
+    fi
+    log "Running minimal model inference"
+    "$pybin" "$EXTRACTED_DIR/python/minimal_infer.py" \
+      --input-nii "$INPUT_NII" \
+      --output-nii "$out_file" \
+      --model-pth "$EXTRACTED_DIR/models/view3/model_spleen.pth" \
+      --batch-size "$BATCH_SIZE" \
+      --lmk-num "$LMK_NUM" \
+      $restore_flag
+  else
+    log "Running legacy DeepSpleen inference (segment_test.py)"
+    rm -rf "$OUTPUTS_DIR" "$RESULTS_DIR"
+    mkdir -p "$OUTPUTS_DIR" "$RESULTS_DIR"
+
+    "$pybin" "$EXTRACTED_DIR/python/prepare_input_local.py" \
+      --input_nii "$INPUT_NII" \
+      --output_root "$OUTPUTS_DIR" \
+      --subject_id "$CASE_ID" \
+      --view "$VIEW"
+
+    (
+      cd "$EXTRACTED_DIR/python"
+      MODEL_ROOT_PATH="$EXTRACTED_DIR/models" \
+      TEST_IMG_ROOT_DIR="$OUTPUTS_DIR/Data_2D" \
+      WORKING_ROOT_DIR="$RESULTS_DIR" \
+      IMG_LOAD_NAME="$OUTPUTS_DIR/dicom2nifti" \
+      IMG_NAME="$OUTPUTS_DIR/dicom2nifti/target_img.nii.gz" \
+      PYTHONPATH="$EXTRACTED_DIR/python${PYTHONPATH:+:$PYTHONPATH}" \
+      "$pybin" "$EXTRACTED_DIR/python/segment_test.py" \
+        --model_name model_spleen \
+        --network "$NETWORK" \
+        --workers 0 \
+        --batchSize_lmk "$BATCH_SIZE" \
+        --viewName "$VIEW" \
+        --loss_fun cross_entropy \
+        --lmk_num "$LMK_NUM"
+    )
+
+    local legacy_out
+    legacy_out="$RESULTS_DIR/results_single/$NETWORK/cross_entropy/seg_output/$CASE_ID/${CASE_ID}_${VIEW}.nii.gz"
+    if [[ ! -f "$legacy_out" ]]; then
+      legacy_out="$(find "$RESULTS_DIR" -type f -name "${CASE_ID}_${VIEW}.nii.gz" | head -n 1 || true)"
+    fi
+    [[ -n "$legacy_out" && -f "$legacy_out" ]] || die "Legacy output not found under: $RESULTS_DIR"
+    if [[ "$RESTORE_SHAPE" == "1" ]]; then
+      "$pybin" - "$INPUT_NII" "$legacy_out" "$out_file" <<'PYEOF'
+import sys
+import nibabel as nib
+import numpy as np
+from PIL import Image
+
+in_nii = sys.argv[1]
+legacy_nii = sys.argv[2]
+out_nii = sys.argv[3]
+
+src_img = nib.load(in_nii)
+msk_img = nib.load(legacy_nii)
+src = np.asanyarray(src_img.dataobj)
+msk = np.asanyarray(msk_img.dataobj)
+
+if src.ndim > 3:
+    src = src[..., 0]
+if msk.ndim > 3:
+    msk = msk[..., 0]
+if src.ndim != 3 or msk.ndim != 3:
+    raise RuntimeError("Expected 3D arrays")
+
+sx, sy, sz = src.shape
+mx, my, mz = msk.shape
+if sz != mz:
+    raise RuntimeError("Slice mismatch: src z=%d mask z=%d" % (sz, mz))
+
+if sx == mx and sy == my:
+    out = msk.astype(np.uint8)
+else:
+    out = np.zeros((sx, sy, sz), dtype=np.uint8)
+    for z in range(sz):
+        sl = msk[:, :, z].astype(np.uint8)
+        pil = Image.fromarray(sl, mode='L')
+        pil = pil.resize((sy, sx), Image.NEAREST)
+        out[:, :, z] = np.asarray(pil, dtype=np.uint8)
+
+nib.save(nib.Nifti1Image(out, src_img.affine, src_img.header), out_nii)
+print("Saved:", out_nii)
+PYEOF
+    else
+      cp -f "$legacy_out" "$out_file"
+    fi
+  fi
 
   [[ -f "$out_file" ]] || die "Expected output not found: $out_file"
 
