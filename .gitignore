@@ -19,6 +19,8 @@ venv/
 **/data/**
 **/outputs/**
 **/logs/**
+**/env/**
+dumps/**
 
 # Medical imaging and checkpoints
 *.nii

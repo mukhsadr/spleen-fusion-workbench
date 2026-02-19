@@ -8,7 +8,22 @@ Place pipeline-specific code in:
 - `outputs/` (ignored by git)
 - `logs/` (ignored by git)
 
-Run:
+Minimal spleen-only setup:
+```bash
+bash scripts/install_with_sudo.sh
+```
+
+Download spleen model once:
+```bash
+bash scripts/download_spleen_model.sh /path/to/input.nii.gz
+```
+
+Or install + warmup in one step:
+```bash
+bash scripts/install_with_sudo.sh /path/to/input.nii.gz
+```
+
+Run spleen segmentation:
 ```bash
 bash scripts/run.sh /path/to/input.nii.gz
 ```
