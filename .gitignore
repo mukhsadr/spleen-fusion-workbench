@@ -1,0 +1,61 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Keep repo lightweight: ignore model and data artifacts
+**/models/**
+**/data/**
+**/outputs/**
+**/logs/**
+
+# Medical imaging and checkpoints
+*.nii
+*.nii.gz
+*.mha
+*.mhd
+*.nrrd
+*.h5
+*.hdf5
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.weights
+*.joblib
+*.pkl
+
+# Large archives / containers
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.sif
+*.img
+*.iso
+
+# Local runtime/extraction workdirs
+extracted_spleen/
+local_run/
+spleen_runtime*/
+spleen_runtime_test/
+spleen_runtime_min/
+
+# Allow docs/scripts/configs even under ignored trees
+!**/README.md
+!**/*.md
+!**/scripts/**
+!**/configs/**
+!**/.gitkeep
