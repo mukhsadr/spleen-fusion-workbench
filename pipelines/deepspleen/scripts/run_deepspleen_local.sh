@@ -95,6 +95,7 @@ RUN_DIR="$ROOT_DIR/local_run"
 MOUNT_DIR="/tmp/deepspleen_sif_mount_${USER:-user}"
 OUTPUTS_DIR="$RUN_DIR/OUTPUTS"
 RESULTS_DIR="$RUN_DIR/DeepSegResults"
+KEEP_TEMP="${DEEPSPLEEN_KEEP_TEMP:-0}"
 
 mount_sif() {
   require_cmd squashfuse
@@ -409,22 +410,26 @@ run_inference() {
       $restore_flag
   else
     log "Running legacy DeepSpleen inference (segment_test.py)"
-    rm -rf "$OUTPUTS_DIR" "$RESULTS_DIR"
-    mkdir -p "$OUTPUTS_DIR" "$RESULTS_DIR"
+    local run_stamp work_root outputs_dir results_dir
+    run_stamp="$(date +%Y%m%d_%H%M%S)_$$"
+    work_root="$RUN_DIR/work_${CASE_ID}_${run_stamp}"
+    outputs_dir="$work_root/OUTPUTS"
+    results_dir="$work_root/DeepSegResults"
+    mkdir -p "$outputs_dir" "$results_dir"
 
     "$pybin" "$EXTRACTED_DIR/python/prepare_input_local.py" \
       --input_nii "$INPUT_NII" \
-      --output_root "$OUTPUTS_DIR" \
+      --output_root "$outputs_dir" \
       --subject_id "$CASE_ID" \
       --view "$VIEW"
 
     (
       cd "$EXTRACTED_DIR/python"
       MODEL_ROOT_PATH="$EXTRACTED_DIR/models" \
-      TEST_IMG_ROOT_DIR="$OUTPUTS_DIR/Data_2D" \
-      WORKING_ROOT_DIR="$RESULTS_DIR" \
-      IMG_LOAD_NAME="$OUTPUTS_DIR/dicom2nifti" \
-      IMG_NAME="$OUTPUTS_DIR/dicom2nifti/target_img.nii.gz" \
+      TEST_IMG_ROOT_DIR="$outputs_dir/Data_2D" \
+      WORKING_ROOT_DIR="$results_dir" \
+      IMG_LOAD_NAME="$outputs_dir/dicom2nifti" \
+      IMG_NAME="$outputs_dir/dicom2nifti/target_img.nii.gz" \
       PYTHONPATH="$EXTRACTED_DIR/python${PYTHONPATH:+:$PYTHONPATH}" \
       "$pybin" "$EXTRACTED_DIR/python/segment_test.py" \
         --model_name model_spleen \
@@ -437,11 +442,11 @@ run_inference() {
     )
 
     local legacy_out
-    legacy_out="$RESULTS_DIR/results_single/$NETWORK/cross_entropy/seg_output/$CASE_ID/${CASE_ID}_${VIEW}.nii.gz"
+    legacy_out="$results_dir/results_single/$NETWORK/cross_entropy/seg_output/$CASE_ID/${CASE_ID}_${VIEW}.nii.gz"
     if [[ ! -f "$legacy_out" ]]; then
-      legacy_out="$(find "$RESULTS_DIR" -type f -name "${CASE_ID}_${VIEW}.nii.gz" | head -n 1 || true)"
+      legacy_out="$(find "$results_dir" -type f -name "${CASE_ID}_${VIEW}.nii.gz" | head -n 1 || true)"
     fi
-    [[ -n "$legacy_out" && -f "$legacy_out" ]] || die "Legacy output not found under: $RESULTS_DIR"
+    [[ -n "$legacy_out" && -f "$legacy_out" ]] || die "Legacy output not found under: $results_dir"
     if [[ "$RESTORE_SHAPE" == "1" ]]; then
       "$pybin" - "$INPUT_NII" "$legacy_out" "$out_file" <<'PYEOF'
 import sys
@@ -485,6 +490,12 @@ print("Saved:", out_nii)
 PYEOF
     else
       cp -f "$legacy_out" "$out_file"
+    fi
+
+    if [[ "$KEEP_TEMP" != "1" ]]; then
+      rm -rf "$work_root"
+      # Backward compatibility cleanup for old shared temp layout.
+      rm -rf "$OUTPUTS_DIR" "$RESULTS_DIR"
     fi
   fi
 

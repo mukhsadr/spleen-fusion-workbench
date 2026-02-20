@@ -19,6 +19,7 @@ def main():
     nib.save(out_img, args.output)
     out_ax = aff2axcodes(out_img.affine)
     print('input_axcodes:', ''.join(in_ax))
+    print('target_axcodes: LAS')
     print('output_axcodes:', ''.join(out_ax))
 
 if __name__ == '__main__':

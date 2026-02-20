@@ -15,17 +15,17 @@ def main():
     seg_las = nib.load(args.las_seg)
 
     orig_ax = aff2axcodes(orig.affine)
-    las_ax = aff2axcodes(seg_las.affine)
+    seg_ax = aff2axcodes(seg_las.affine)
 
     orig_ornt = io_orientation(orig.affine)
-    las_ornt = axcodes2ornt(('L', 'A', 'S'))
-    inv_xform = ornt_transform(las_ornt, orig_ornt)
+    seg_ornt = io_orientation(seg_las.affine)
+    inv_xform = ornt_transform(seg_ornt, orig_ornt)
 
     seg_orig = seg_las.as_reoriented(inv_xform)
     nib.save(seg_orig, args.output)
 
     out_ax = aff2axcodes(seg_orig.affine)
-    print('las_axcodes:', ''.join(las_ax))
+    print('seg_input_axcodes:', ''.join(seg_ax))
     print('restored_axcodes:', ''.join(out_ax))
     print('target_orig_axcodes:', ''.join(orig_ax))
 
